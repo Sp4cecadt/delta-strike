@@ -41,6 +41,8 @@ body.touch #ctl{display:block}
 <script>
 (()=>{'use strict';
 let W=160,H=256,WW=160,PY=40,CTL=0;const ROW=8,S=96;
+// speed tuning: SF scales all original speeds (orig: normal 72, fast 130, slow 40, title 26, bullet 300, steer 92 px/s)
+const SF=0.58,V_NORM=72*SF,V_FAST=130*SF,V_SLOW=40*SF,V_TITLE=26*SF,V_BULLET=300*SF,V_STEER=92*0.75;
 const MID=()=>4*Math.round(WW/8);
 const $=id=>document.getElementById(id);
 const cv=$('cv'),cx=cv.getContext('2d');cx.imageSmoothingEnabled=false;
@@ -100,11 +102,11 @@ function gen(k){let s=cache.get(k);if(s)return s;
  while(i<S-16){const roll=r();const pf=k<1?0.2:0.15;let t;
   if(roll<pf)t='fuel';else if(k>=1&&roll<pf+Math.min(0.06+0.03*k,0.22))t='jet';else t=r()<0.5?'boat':'heli';
   const [w,h]=SZ[t];
-  if(t==='jet'){const d=r()<0.5?1:-1;sp.push({t,x:d>0?-14:WW+2,gi:i,w,h,vx:d*(48+Math.min(k*5,40)),mover:true})}
+  if(t==='jet'){const d=r()<0.5?1:-1;sp.push({t,x:d>0?-14:WW+2,gi:i,w,h,vx:d*(48+Math.min(k*5,40))*SF,mover:true})}
   else{const nr=Math.ceil((h+1)/8);const side=r()<0.5?0:1;let a=0,b=WW;
    for(let j=0;j<nr;j++){const q=chan(rows[i+j],side);a=Math.max(a,q[0]);b=Math.min(b,q[1])}
    if(b-a<w+4){i+=2;continue}
-   const mover=t!=='fuel'&&r()<Math.min(0.15+0.12*k,0.85);const spd=(18+Math.min(k*5,40)+r()*14)*(r()<0.5?-1:1);
+   const mover=t!=='fuel'&&r()<Math.min(0.15+0.12*k,0.85);const spd=(18+Math.min(k*5,40)+r()*14)*SF*(r()<0.5?-1:1);
    sp.push({t,x:a+2+r()*(b-a-w-4),gi:i,w,h,vx:spd,mover})}
   i+=gap+(r()*4|0)}
  s={rows,sp};cache.set(k,s);
@@ -122,12 +124,20 @@ function unlock(){try{if(!AC){const A=window.AudioContext||window.webkitAudioCon
  if(AC.state!=='running')AC.resume()}catch(e){}}
 function tone(f,d,type='square',v=0.08,f2,delay=0){if(!AC||muted)return;const t=AC.currentTime+delay,o=AC.createOscillator(),g=AC.createGain();o.type=type;o.frequency.setValueAtTime(f,t);if(f2)o.frequency.exponentialRampToValueAtTime(f2,t+d);g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(0.0008,t+d);o.connect(g);g.connect(AC.destination);o.start(t);o.stop(t+d+0.02)}
 function noise(d,v=0.3,fq=900){if(!AC||muted)return;const t=AC.currentTime,s=AC.createBufferSource(),f=AC.createBiquadFilter(),g=AC.createGain();s.buffer=noiseBuf;f.type='lowpass';f.frequency.setValueAtTime(fq,t);f.frequency.exponentialRampToValueAtTime(60,t+d);g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(0.001,t+d);s.connect(f);f.connect(g);g.connect(AC.destination);s.start(t);s.stop(t+d)}
-const sfx={shoot:()=>tone(1200,0.09,'square',0.05,180),boom:()=>{noise(0.45,0.35,1400);tone(140,0.35,'triangle',0.18,40)},big:()=>{noise(1.1,0.5,1800);tone(90,0.9,'triangle',0.25,30)},
- crash:()=>{noise(1.3,0.5,2200);tone(300,1.0,'sawtooth',0.12,30)},full:()=>{tone(1320,0.12,'square',0.04);tone(1760,0.18,'square',0.04,0,0.09)},alarm:()=>tone(880,0.09,'square',0.05),
+function nz(d,v,fq,o={}){if(!AC||muted)return;const t=AC.currentTime+(o.delay||0),s=AC.createBufferSource(),f=AC.createBiquadFilter(),g=AC.createGain();s.buffer=noiseBuf;s.loop=d>0.9;s.playbackRate.value=o.rate||1;f.type=o.type||'lowpass';f.Q.value=o.q||0.7;f.frequency.setValueAtTime(fq,t);f.frequency.exponentialRampToValueAtTime(o.f2||60,t+d);g.gain.setValueAtTime(0.0001,t);g.gain.linearRampToValueAtTime(v,t+(o.att||0.004));g.gain.exponentialRampToValueAtTime(0.0008,t+d);s.connect(f);f.connect(g);g.connect(AC.destination);s.start(t);s.stop(t+d+0.02)}
+const sfx={
+ shoot:()=>{tone(620,0.055,'square',0.035,150);tone(180,0.07,'triangle',0.09,70);nz(0.035,0.09,5000,{type:'highpass',f2:2500})},
+ boat:()=>{nz(0.55,0.32,1100,{type:'bandpass',q:1.2,f2:200});tone(170,0.4,'triangle',0.16,45);nz(0.25,0.12,3000,{delay:0.08,f2:400})},
+ heli:()=>{for(let n=0;n<5;n++)nz(0.09,0.3-n*0.04,2600,{delay:n*0.07,f2:500,att:0.002});tone(700,0.45,'sawtooth',0.05,90)},
+ jet:()=>{nz(0.32,0.4,6000,{f2:300,att:0.002});tone(1100,0.3,'square',0.05,60);tone(240,0.35,'triangle',0.14,40)},
+ fuel:()=>{tone(110,0.9,'sine',0.42,26);nz(1.0,0.5,800,{f2:50,att:0.02});tone(55,1.0,'triangle',0.22,22,0.03);nz(0.3,0.2,3500,{f2:600})},
+ big:()=>{nz(2.4,0.55,1500,{f2:40,att:0.01,rate:0.7});tone(75,2.2,'sine',0.4,20);tone(150,0.6,'triangle',0.18,35);for(let n=1;n<6;n++)nz(0.35,0.28-n*0.035,1200,{delay:0.25+n*0.3,f2:100})},
+ crash:()=>{nz(1.5,0.55,2600,{f2:50});tone(420,1.2,'sawtooth',0.11,28);tone(90,1.3,'sine',0.3,20,0.05);nz(0.5,0.25,4000,{delay:0.15,type:'bandpass',q:2,f2:300})},full:()=>{tone(1320,0.12,'square',0.04);tone(1760,0.18,'square',0.04,0,0.09)},alarm:()=>tone(880,0.09,'square',0.05),
  life:()=>[523,659,784,1047].forEach((f,i)=>tone(f,0.12,'square',0.06,0,i*0.09)),start:()=>[392,523,659,784,659,784].forEach((f,i)=>tone(f,0.1,'square',0.05,0,i*0.08)),
  over:()=>[392,330,262,196].forEach((f,i)=>tone(f,0.22,'triangle',0.12,0,i*0.2))};
+window.DSFX=sfx;window.DSA={set:(a,n)=>{AC=a;noiseBuf=n;muted=false},get:()=>[AC,noiseBuf]};
 function refuelSnd(on,f){G.refOn=!!on;if(!refG)return;const t=AC.currentTime;refG.gain.setTargetAtTime(on&&!muted?0.06:0,t,0.03);if(on)refO.frequency.setTargetAtTime(300+f*600,t,0.05)}
-function engine(on,spd){if(!engG)return;const t=AC.currentTime;if(!on)refuelSnd(false);engG.gain.setTargetAtTime(on&&!muted?0.035:0,t,0.05);if(on)eng.frequency.setTargetAtTime(38+spd*0.45,t,0.08)}
+function engine(on,spd){if(!engG)return;const t=AC.currentTime;if(!on)refuelSnd(false);engG.gain.setTargetAtTime(on&&!muted?0.035:0,t,0.05);if(on)eng.frequency.setTargetAtTime(38+spd*0.45/SF,t,0.08)}
 // ---------- input
 const K={l:0,r:0,u:0,d:0,f:0};const T={steer:0,spd:0,fire:0};
 const km={ArrowLeft:'l',KeyA:'l',ArrowRight:'r',KeyD:'r',ArrowUp:'u',KeyW:'u',ArrowDown:'d',KeyS:'d',Space:'f',KeyJ:'f',KeyZ:'f'};
@@ -164,7 +174,7 @@ function spawnSec(k){const s=gen(k);for(const p of s.sp)G.ents.push({t:p.t,x:p.x
 function ensure(){while(G.spawned*S*ROW<G.cam+H+96){spawnSec(G.spawned);G.spawned++}
  G.ents=G.ents.filter(e=>!e.dead&&e.y+e.h>G.cam-24)}
 function setWorld(){const nw=Math.max(160,4*Math.floor(Math.min(W,240)/4));if(nw!==WW){WW=nw;cache.clear();const m=MID();DEF={l:m-16,r:m+16,il:0,ir:0,t1:-1,t2:-1,t3:-1,road:0};G.ents=[];G.spawned=Math.max(0,Math.floor(G.cam/(S*ROW)));G.px=m}}
-function placeAt(k){G.cam=k*S*ROW+ROW-PY;G.px=MID();G.vx=0;G.vy=72;G.ents=[];G.spawned=k;G.bullet=null;G.fuel=1;G.zone=k;ensure()}
+function placeAt(k){G.cam=k*S*ROW+ROW-PY;G.px=MID();G.vx=0;G.vy=V_NORM;G.ents=[];G.spawned=k;G.bullet=null;G.fuel=1;G.zone=k;ensure()}
 function newGame(){setWorld();G.score=0;G.lives=3;G.cp=0;G.nextLife=10000;G.parts=[];G.newHi=false;placeAt(0);G.st='play';G.msg='ZONE 1';G.msgT=2;sfx.start();$('pauseB').textContent='PAUSE'}
 function press(){if(G.st==='title')newGame();else if(G.st==='over'&&G.timer<=0)newGame()}
 function addScore(n){G.score+=n;if(G.score>=G.nextLife){G.nextLife+=10000;if(G.lives<9){G.lives++;sfx.life();G.msg='BONUS JET';G.msgT=1.5}}}
@@ -172,31 +182,31 @@ function explode(x,y,n,cols,sp=60){for(let i=0;i<n;i++){const a=Math.random()*6.
 function die(){if(G.st!=='play')return;G.st='dead';G.timer=1.8;engine(false);sfx.crash();explode(G.px,G.cam+PY+5,60,['#fff','#ffd040','#ff7020','#ff3020','#888'],80)}
 function hit(e){e.dead=true;addScore(PTS[e.t]);const cxx=e.x+e.w/2,cyy=e.y+e.h/2;
  if(e.t==='bridge'){sfx.big();for(let x=e.x;x<e.x+e.w;x+=4)explode(x,cyy,6,['#fff','#ffd040','#ff7020','#555'],50);G.cp=e.sec+1;G.msg='ZONE '+(e.sec+2);G.msgT=2;G.flash=0.15}
- else{sfx.boom();explode(cxx,cyy,22,e.t==='fuel'?['#fff','#e03030','#3090ff','#ffd040']:['#fff','#ffd040','#ff7020','#ff3020'])}}
+ else{(sfx[e.t]||sfx.boat)();explode(cxx,cyy,22,e.t==='fuel'?['#fff','#e03030','#3090ff','#ffd040']:['#fff','#ffd040','#ff7020','#ff3020'])}}
 function inWater(x0,x1,wy){const row=rowAt(Math.floor(wy/ROW));if(x0<row.l||x1>row.r)return false;if(row.il&&x1>row.il&&x0<row.ir)return false;return true}
 function step(dt){G.tick++;
  for(const p of G.parts){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=0.96;p.vy*=0.96;p.l-=dt}G.parts=G.parts.filter(p=>p.l>0);
  if(G.msgT>0)G.msgT-=dt;if(G.flash>0)G.flash-=dt;
  if(G.st!=='play')refuelSnd(false);
- if(G.st==='title'){G.cam+=26*dt;ensure();moveEnts(dt);return}
+ if(G.st==='title'){G.cam+=V_TITLE*dt;ensure();moveEnts(dt);return}
  if(G.st==='dead'){G.timer-=dt;if(G.timer<=0){G.lives--;if(G.lives<=0){G.st='over';G.timer=1.2;if(G.score>hi){hi=G.score;G.newHi=true;try{localStorage.setItem('deltaStrikeHi',hi)}catch(e){}}sfx.over()}else{placeAt(G.cp);G.st='play';G.msg='READY';G.msgT=1.2}}moveEnts(dt);return}
  if(G.st==='over'){G.timer-=dt;return}
  if(G.st!=='play')return;
  const steer=clamp((K.r-K.l)+T.steer,-1,1),sp=clamp((K.u-K.d)+T.spd,-1,1);
- const tvy=sp>0?130:sp<0?40:72;G.vy+=(tvy-G.vy)*Math.min(1,dt*3);
- G.vx+=(steer*92-G.vx)*Math.min(1,dt*10);G.px=clamp(G.px+G.vx*dt,4,WW-4);
+ const tvy=sp>0?V_FAST:sp<0?V_SLOW:V_NORM;G.vy+=(tvy-G.vy)*Math.min(1,dt*3);
+ G.vx+=(steer*V_STEER-G.vx)*Math.min(1,dt*10);G.px=clamp(G.px+G.vx*dt,4,WW-4);
  G.cam+=G.vy*dt;ensure();engine(true,G.vy);
  // fuel
- G.fuel-=dt*0.034*(0.7+G.vy/240);G.refuel=false;
+ G.fuel-=dt*0.034*SF*(0.7+G.vy/(240*SF));G.refuel=false;
  // bullet
  if((K.f||T.fire)&&!G.bullet){G.bullet={x:G.px-1,y:G.cam+PY+10};sfx.shoot()}
- if(G.bullet){G.bullet.y+=(300+G.vy)*dt;if(G.bullet.y>G.cam+H)G.bullet=null}
+ if(G.bullet){G.bullet.y+=(V_BULLET+G.vy)*dt;if(G.bullet.y>G.cam+H)G.bullet=null}
  moveEnts(dt);
  const py=G.cam+PY,pl=G.px-3,pr=G.px+3;
  for(const e of G.ents){if(e.dead)continue;
   const b=G.bullet;if(b&&b.x+2>e.x&&b.x<e.x+e.w&&b.y+6>e.y&&b.y<e.y+e.h){G.bullet=null;hit(e);continue}
   if(pr>e.x+1&&pl<e.x+e.w-1&&py+9>e.y+1&&py+1<e.y+e.h-1){if(e.t==='fuel'){G.refuel=true}else{if(e.t!=='bridge'){e.dead=true;explode(e.x+e.w/2,e.y+e.h/2,16,['#fff','#ff7020'])}die();return}}}
- if(G.refuel){const was=G.fuel;G.fuel=Math.min(1,G.fuel+dt*0.42);if(was<1&&G.fuel>=1)sfx.full();refuelSnd(G.fuel<1,G.fuel)}else refuelSnd(false);
+ if(G.refuel){const was=G.fuel;G.fuel=Math.min(1,G.fuel+dt*0.42*SF);if(was<1&&G.fuel>=1)sfx.full();refuelSnd(G.fuel<1,G.fuel)}else refuelSnd(false);
  if(G.fuel<0.25&&!G.refuel){G.alarmT-=dt;if(G.alarmT<=0){G.alarmT=0.45;sfx.alarm()}}
  if(G.fuel<=0){G.fuel=0;die();return}
  if(!inWater(pl,pr,py+2)||!inWater(pl,pr,py+8)||!inWater(G.px-1,G.px+1,py+10)){die();return}
